@@ -22,7 +22,7 @@ float pr_sr = 44100.0f;
 volatile float pr_volume = 1.0f;
 
 enum { MAXB = VIBE_MAX_BLOCK, CMD_SIZE = 64, NOTES_OUT = 48 };
-enum { CMD_PLAY = 1, CMD_STOP, CMD_AUDITION, CMD_PANIC, CMD_SONG_MODE, CMD_CLOCK };
+enum { CMD_PLAY = 1, CMD_STOP, CMD_AUDITION, CMD_PANIC, CMD_SONG_MODE, CMD_CLOCK, CMD_REC_ARM, CMD_REC_STOP, CMD_REC_RELEASE };
 struct command { uint8_t type, a, b, c; int8_t d; };
 struct event { uint16_t offset; uint8_t ring, step, velocity, pattern; int8_t pitch; uint8_t has_pitch; };
 
@@ -77,6 +77,9 @@ void pr_stop(void) { push(CMD_STOP, 0, 0, 0, 0); }
 void pr_song_mode(unsigned song) { push(CMD_SONG_MODE, (uint8_t)(song != 0), 0, 0, 0); }
 void pr_clock(unsigned on) { push(CMD_CLOCK, (uint8_t)(on != 0), 0, 0, 0); }
 void pr_panic(void) { push(CMD_PANIC, 0, 0, 0, 0); }
+void pr_rec_arm(unsigned slot) { push(CMD_REC_ARM, (uint8_t)(slot % SMP_SLOTS), 0, 0, 0); }
+void pr_rec_stop(void) { push(CMD_REC_STOP, 0, 0, 0, 0); }
+void pr_rec_release(void) { push(CMD_REC_RELEASE, 0, 0, 0, 0); }
 void pr_audition(unsigned ring, unsigned velocity) { push(CMD_AUDITION, (uint8_t)ring, (uint8_t)(velocity > 127 ? 127 : velocity), 0, 0); }
 void pr_audition_step(unsigned ring, unsigned step, unsigned velocity)
 {
@@ -110,6 +113,7 @@ void pr_engine_init(void)
     for (unsigned i = 0; i < PR_RINGS; ++i) pd_kit_init(KIT(i));
     ps_init();
     ps_tables();
+    ss_init();
     /* Constant-power pan law, 0..127 with 64 at the centre (both 0.707). */
     for (unsigned p = 0; p < 128; ++p) {
         float x = (float)p / 127.0f;
@@ -260,7 +264,7 @@ static void notes_age(int frames)
         if (notes_out[i].on) notes_out[i].left = notes_out[i].left > (uint32_t)frames ? notes_out[i].left - (uint32_t)frames : 0u;
 }
 
-void pr_render(float *out_l, float *out_r, int frames_in)
+void pr_render(const float *in, float *out_l, float *out_r, int frames_in)
 {
     unsigned frames = frames_in < 1 ? 0u : frames_in > MAXB ? (unsigned)MAXB : (unsigned)frames_in;
     for (unsigned i = 0; i < frames; ++i) { out_l[i] = 0; out_r[i] = 0; }
@@ -299,14 +303,23 @@ void pr_render(float *out_l, float *out_r, int frames_in)
         } else if (c.type == CMD_AUDITION && c.a < PR_RINGS) {
             if (c.c == 255) add_event(0, c.a, 255u, c.b, 255, c.d, 1, &count);
             else add_event(0, c.a, c.c ? (unsigned)c.c - 1u : 255u, c.b, 255, 0, 0, &count);
+        } else if (c.type == CMD_REC_ARM) {
+            ss_rec_arm(c.a, 0.03f);
+        } else if (c.type == CMD_REC_STOP) {
+            ss_rec_stop();
+        } else if (c.type == CMD_REC_RELEASE) {
+            ss_rec_release();
         } else if (c.type == CMD_PANIC) {
-            for (unsigned i = 0; i < PR_RINGS; ++i) { pd_panic(KIT(i)); ps_panic(i); }
+            for (unsigned i = 0; i < PR_RINGS; ++i) { pd_panic(KIT(i)); ps_panic(i); ss_panic(i); }
             all_notes_off(0);
             uint16_t used = 0;
             for (unsigned q = 0; q < PR_RINGS; ++q) if (st->cur.ring[q].midi[0]) used |= (uint16_t)(1u << (st->cur.ring[q].midi[1] & 15u));
             for (unsigned ch = 0; ch < 16; ++ch) if (used >> ch & 1u) vibe_midi_send((uint8_t)(0xB0 | ch), 123, 0);
         }
     }
+
+    /* ---- IN 1: the input level, and the recording of a sample ---- */
+    ss_rec_block(in, frames);
 
     /* ---- who leads: a DAW or a MIDI clock (its song position), else our own transport ---- */
     const vibe_transport_info *tp = vibe_transport();
@@ -422,8 +435,8 @@ void pr_render(float *out_l, float *out_r, int frames_in)
         unsigned has = 0;
         for (unsigned e = 0; e < count; ++e) if (events[e].ring == r) { has = 1; break; }
         /* Both engines render: a tail keeps ringing after the circle changes bank. */
-        unsigned drums = pd_active(kit), tonal = ps_active(r);
-        if (!has && !drums && !tonal) continue;
+        unsigned drums = pd_active(kit), tonal = ps_active(r), sampled = ss_active(r);
+        if (!has && !drums && !tonal && !sampled) continue;
         for (unsigned i = 0; i < frames; ++i) ring_buffer[i] = 0;
         unsigned at = 0;
         for (unsigned e = 0; e < count; ++e) {
@@ -432,6 +445,7 @@ void pr_render(float *out_l, float *out_r, int frames_in)
             if (off > at) {
                 if (drums) pd_render(kit, ring_buffer + at, off - at);
                 if (tonal) ps_render(r, ring_buffer + at, off - at);
+                if (sampled) ss_render(r, ring_buffer + at, off - at);
                 at = off;
             }
             const struct pr_pattern *p = events[e].pattern >= 254 ? &st->cur : &st->scene[events[e].pattern % PR_SCENES];
@@ -449,7 +463,10 @@ void pr_render(float *out_l, float *out_r, int frames_in)
             }
             unsigned silent = ring->midi[0] && (ring->midi[3] & PR_MIDI_ONLY);   /* MIDI only */
             if (silent) { /* routed to MIDI only */ }
-            else if (ring->bank) {
+            else if (ring->bank == PR_BANK_SAMPLE) {
+                ss_trigger(r, ring->sound, velocity, ring->tune, ring->decay, ring->tone, ring->drive, pitch, gate);
+                sampled = 1;
+            } else if (ring->bank) {
                 ps_trigger(r, ring->bank, ring->sound, velocity, ring->tune, ring->decay, ring->tone, ring->drive, pitch, gate);
                 tonal = 1;
             } else {
@@ -461,6 +478,7 @@ void pr_render(float *out_l, float *out_r, int frames_in)
         if (at < frames) {
             if (drums) pd_render(kit, ring_buffer + at, frames - at);
             if (tonal) ps_render(r, ring_buffer + at, frames - at);
+            if (sampled) ss_render(r, ring_buffer + at, frames - at);
         }
         const struct pr_ring *ring = &mixp->ring[r];
         float level = (float)ring->level * (1.0f / 127.0f);
@@ -498,6 +516,8 @@ void pr_render(float *out_l, float *out_r, int frames_in)
     }
     for (unsigned r = 0; r < PR_RINGS; ++r) { status.hits[r] = ring_hits[r]; status.last_step[r] = ring_last[r]; }
     status.peak_l = peak_l; status.peak_r = peak_r;
+    status.in_peak = ss_in_peak(); status.rec_state = (uint8_t)ss_rec_state(); status.rec_slot = (uint8_t)ss_rec_slot();
+    status.rec_len = ss_rec_length();
     VIBE_RELEASE();
     status_seq = s0 + 1u;
     (void)clock_on;

@@ -37,7 +37,7 @@ struct ps_def {
     uint8_t repeat, drive, level;               /* noise ratchet count<<4 | gap (2 ms steps); drive; trim /64 */
 };
 
-static const struct ps_def defs[PR_BANKS - 1][PR_SOUNDS] = {
+static const struct ps_def defs[PR_SYNTH_BANKS][PR_SOUNDS] = {
 {   /* BASSES (C2) */
     {.note = 36, .wave = W_SINE | MONO, .attack = MS(3), .decay = MS(1500), .level = 72},
     {.note = 36, .wave = W_SINE | MONO, .attack = MS(1), .decay = MS(2200), .pitch = 12, .pitch_time = MS(220), .drive = 70, .level = 100},
@@ -283,13 +283,13 @@ void ps_init(void)
 unsigned ps_melodic(unsigned bank) { return bank == 1 || bank == 2 || bank == 4; }
 unsigned ps_base_note(unsigned bank, unsigned sound)
 {
-    return bank && bank < PR_BANKS ? defs[bank - 1][sound % PR_SOUNDS].note : 60;
+    return bank && bank <= PR_SYNTH_BANKS ? defs[bank - 1][sound % PR_SOUNDS].note : 60;
 }
 
 void ps_trigger(unsigned ring, unsigned bank, unsigned sound, float velocity,
     unsigned tune, unsigned decay, unsigned tone, unsigned drive, int semitones, uint32_t gate)
 {
-    if (ring >= PR_RINGS || !bank || bank >= PR_BANKS || !(velocity > 0)) return;
+    if (ring >= PR_RINGS || !bank || bank > PR_SYNTH_BANKS || !(velocity > 0)) return;
     const struct ps_def *d = &defs[bank - 1][sound % PR_SOUNDS];
     struct ps_voice *vs = voices[ring], *v = &vs[0];
     for (unsigned i = 0; i < VOICES; ++i) {   /* a free voice, else the quietest one */

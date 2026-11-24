@@ -221,6 +221,62 @@ static void slots_scan(void)
 }
 static void save_now(void) { if (state_write("state.bin") == 0) autosave_due = 0; settings_write(); }
 
+/* ---------- samples from IN 1: sixteen slots, one file each (they belong to no song: every slot sees them) ---------- */
+enum { SMP_MAGIC = 0x4d535043u /* "PCSM" */ };
+struct smp_head { uint32_t magic, rate_bits, length, crc; };
+static uint8_t wave[SMP_SLOTS][100];           /* the outline drawn on SOUND */
+static int input_asked, rec_taking;
+static void smp_name(char *n, unsigned slot) { strcpy(n, "smp00.bin"); n[3] = (char)('0' + (slot + 1) / 10); n[4] = (char)('0' + (slot + 1) % 10); }
+static void wave_of(unsigned slot)
+{
+    uint32_t len = smp_len[slot];
+    for (unsigned i = 0; i < 100; ++i) {
+        uint32_t a = (uint32_t)((uint64_t)len * i / 100u), b = (uint32_t)((uint64_t)len * (i + 1) / 100u);
+        int peak = 0;
+        for (uint32_t k = a; k < b; k += 4) { int x = smp_data[slot][k]; x = x < 0 ? -x : x; if (x > peak) peak = x; }
+        wave[slot][i] = (uint8_t)(peak >> 8);
+    }
+}
+static void smp_save(unsigned slot)
+{
+    /* the header and the samples in one write: the recording buffer is free again once the take is in its slot */
+    uint8_t *buf = (uint8_t *)(void *)smp_rec;
+    struct smp_head h; float rate = smp_rate[slot];
+    uint32_t len = smp_len[slot];
+    h.magic = SMP_MAGIC; memcpy(&h.rate_bits, &rate, 4); h.length = len;
+    h.crc = pr_crc32(0, smp_data[slot], len * sizeof(int16_t));
+    memcpy(buf, &h, sizeof h);
+    memcpy(buf + sizeof h, smp_data[slot], len * sizeof(int16_t));
+    char n[16]; smp_name(n, slot);
+    if (vibe_store_write(n, buf, (int)(sizeof h + len * sizeof(int16_t)))) toast("COULD NOT SAVE THE SAMPLE", 0);
+}
+static void smp_load_all(void)
+{
+    uint8_t *buf = (uint8_t *)(void *)smp_rec;     /* (at start: nothing records yet) */
+    for (unsigned slot = 0; slot < SMP_SLOTS; ++slot) {
+        char n[16]; smp_name(n, slot);
+        int size = vibe_store_size(n);
+        if (size < (int)sizeof(struct smp_head) || size > (int)(sizeof(struct smp_head) + SMP_MAX * sizeof(int16_t))) continue;
+        if (vibe_store_read(n, buf, size) != size) continue;
+        struct smp_head h; memcpy(&h, buf, sizeof h);
+        float rate; memcpy(&rate, &h.rate_bits, 4);
+        if (h.magic != SMP_MAGIC || h.length > SMP_MAX || sizeof h + h.length * sizeof(int16_t) != (uint32_t)size || !(rate >= 8000.0f && rate <= 384000.0f)) continue;
+        const int16_t *d = (const int16_t *)(const void *)(buf + sizeof h);
+        if (pr_crc32(0, d, h.length * sizeof(int16_t)) != h.crc) continue;
+        ss_set(slot, d, h.length, rate);
+        wave_of(slot);
+    }
+}
+static void sample_key(void)
+{
+    struct pr_ring *r = ring_sel();
+    if (stat.rec_state == REC_ARMED || stat.rec_state == REC_RECORDING) { pr_rec_stop(); toast("SAMPLING", "STOPPED"); return; }
+    if (!input_asked) { vibe_request(VIBE_REQ_AUDIO_INPUT); input_asked = 1; }
+    pr_rec_arm(r->sound);
+    char t[16] = "SLOT "; catn(t, r->sound + 1);
+    toast("PLAY INTO IN 1", t);
+}
+
 /* ---------- editing ---------- */
 static void publish(void) { if (publish_pending && !pr_publish(&st)) publish_pending = 0; }
 static void checkpoint(void) { undo_pattern = st.cur; has_undo = 1; }
@@ -674,7 +730,9 @@ static const char *softkey(unsigned i)
     static const char *const slot_keys[6] = {"LOAD", "SAVE", "DEMO", "", "", "BACK"};
     static const char *const shape_keys[6] = {"EVEN", "BALANCE", "AREA", "ODD", "OPENING", "CLOSURE"};
     switch (page) {
-    case PG_SOUND: case PG_ENV: return sound_keys[i];
+    case PG_SOUND: case PG_ENV:
+        if (i == 5 && ring_sel()->bank == PR_BANK_SAMPLE) return stat.rec_state == REC_ARMED || stat.rec_state == REC_RECORDING ? "STOP" : "SAMPLE";
+        return sound_keys[i];
     case PG_MIX: return mix_keys[i];
     case PG_RHYTHM: return rhythm_keys[i];
     case PG_NOTES: return notes_keys[i];
@@ -689,7 +747,8 @@ static int softkey_on(unsigned i)
 {
     const struct pr_ring *r = ring_sel();
     switch (page) {
-    case PG_SOUND: case PG_ENV: return (i == 3 && (r->flags & PR_MUTE)) || (i == 4 && (r->flags & PR_SOLO));
+    case PG_SOUND: case PG_ENV: return (i == 3 && (r->flags & PR_MUTE)) || (i == 4 && (r->flags & PR_SOLO)) ||
+        (i == 5 && r->bank == PR_BANK_SAMPLE && (stat.rec_state == REC_ARMED || stat.rec_state == REC_RECORDING));
     case PG_MIX: return (i == 2 && (r->flags & PR_MUTE)) || (i == 3 && (r->flags & PR_SOLO));
     case PG_SONG: return (i == 4 && st.song.loop) || (i == 5 && song_on);
     case PG_MIDI: return (i == 0 && (r->midi[3] & PR_MIDI_ONLY)) || (i == 1 && clock_out);
@@ -707,7 +766,7 @@ static void press(unsigned i)
         if (i == 2) audition(110);
         if (i == 3) flag_toggle(sel, PR_MUTE);
         if (i == 4) flag_toggle(sel, PR_SOLO);
-        if (i == 5) sound_reset();
+        if (i == 5) { if (r->bank == PR_BANK_SAMPLE) sample_key(); else sound_reset(); }
         break;
     case PG_MIX:
         if (i == 0) select_ring(-1);
@@ -794,6 +853,19 @@ static void poll(void)
     for (unsigned r = 0; r < PR_RINGS; ++r)
         if (stat.hits[r] != seen_hits[r]) { seen_hits[r] = stat.hits[r]; flash_ms[r] = now_ms(); flash_step[r] = stat.last_step[r]; }
     publish();
+    if (stat.rec_state == REC_DONE && !rec_taking) {      /* a take: into its slot, onto the card */
+        unsigned slot = stat.rec_slot % SMP_SLOTS;
+        if (ss_take(slot, stat.rec_len, SR) == 0) {
+            wave_of(slot); smp_save(slot);
+            char t[24] = "SLOT "; catn(t, (int)slot + 1); cat(t, " · ");
+            unsigned ms = (unsigned)((uint64_t)smp_len[slot] * 1000u / (uint64_t)(SR > 1.0f ? SR : 44100.0f));
+            catn(t, (int)(ms / 1000)); cat(t, "."); catn(t, (int)(ms / 100 % 10)); cat(t, " S");
+            toast("SAMPLED", t);
+            if (!stat.playing) { publish(); pr_audition(sel, 110); }
+        } else toast("NOTHING HEARD", "TRY LOUDER");
+        rec_taking = 1;
+        pr_rec_release();
+    } else if (stat.rec_state != REC_DONE) rec_taking = 0;
     if (autosave_due && now_ms() - changed_ms > 1500u) save_now();
 }
 
@@ -1071,6 +1143,39 @@ static void draw_strip(int y, int cell_h)
         vg_rect(212, yy, 2, cell_h, FG);
     }
 }
+/* SAMPLE bank: the slot's outline, what the recorder does, the input level (the tick: where recording starts) */
+static void draw_sample(unsigned slot)
+{
+    char t[48];
+    uint32_t len = smp_len[slot];
+    unsigned busy = stat.rec_slot == slot && (stat.rec_state == REC_ARMED || stat.rec_state == REC_RECORDING);
+    uint32_t col = RING_RGB[sel];
+    if (busy && stat.rec_state == REC_RECORDING) {
+        unsigned ms = (unsigned)((uint64_t)stat.rec_len * 1000u / (uint64_t)(SR > 1.0f ? SR : 44100.0f));
+        strcpy(t, "RECORDING "); catn(t, (int)(ms / 1000)); cat(t, "."); catn(t, (int)(ms / 100 % 10)); cat(t, " S");
+        vg_text(t, 216, 116, VG_BOLD, RED, VG_LEFT);
+    } else if (busy) vg_text(stat.in_peak < 0.0f ? "WAITING FOR THE INPUT - ALLOW IT" : "ARMED · PLAY INTO IN 1", 216, 116, VG_BOLD, RED, VG_LEFT);
+    else if (!len) vg_text("EMPTY · F6 SAMPLE RECORDS FROM IN 1", 216, 116, VG_SMALL, DIM, VG_LEFT);
+    else {
+        unsigned ms = (unsigned)((uint64_t)len * 1000u / (uint64_t)(smp_rate[slot] > 1.0f ? smp_rate[slot] : 44100.0f));
+        strcpy(t, ""); catn(t, (int)(ms / 1000)); cat(t, "."); catn(t, (int)(ms / 100 % 10)); cat(t, " S · F6 SAMPLE: A NEW TAKE");
+        vg_text(t, 216, 116, VG_SMALL, DIM, VG_LEFT);
+    }
+    vg_round(216, 134, 258, 52, 4, CELL);
+    if (len) for (unsigned i = 0; i < 100; ++i) {
+        int h = wave[slot][i] * 24 / 128; if (h < 1) h = 1;
+        vg_rect(218 + (int)(i * 254 / 100), 160 - h, 2, 2 * h, busy ? MUTED : col);
+    }
+    else vg_rect(220, 159, 250, 1, CELL2);
+    if (busy || stat.in_peak >= 0.0f) {      /* input level, dB: the tick at -30 dB starts a recording */
+        float v = stat.in_peak > 0.00001f ? 1.0f + vd_log2(stat.in_peak) / 10.0f : 0.0f;
+        v = v < 0 ? 0 : v > 1 ? 1 : v;
+        float tick = 1.0f + vd_log2(0.03f) / 10.0f;
+        vg_rect(216, 192, 258, 4, CELL2);
+        vg_rect(216, 192, (int)(258.0f * v), 4, stat.in_peak >= 0.03f ? RED : GREEN);
+        vg_rect(216 + (int)(258.0f * tick), 189, 2, 10, FG);
+    }
+}
 static void draw_info(void)
 {
     const struct pr_ring *r = ring_sel();
@@ -1083,7 +1188,7 @@ static void draw_info(void)
         strcpy(t, pr_bank_names[r->bank % PR_BANKS]); cat(t, " · SOUND "); catn(t, r->sound + 1);
         if (r->midi[0]) { char m[40]; midi_text(m, r, 0); cat(t, " · MIDI "); cat(t, m); }
         vg_text(t, 216, 100, VG_SMALL, DIM, VG_LEFT);
-        draw_strip(124, 16);
+        if (r->bank == PR_BANK_SAMPLE) draw_sample(r->sound % SMP_SLOTS); else draw_strip(124, 16);
         break;
     case PG_RHYTHM:
         if (lib_name[sel]) strcpy(t, lib_name[sel]);
@@ -1348,8 +1453,8 @@ static const char *const HELP_COMMON[] = {
     "OCT - / +", "copy / paste circle",
 };
 static const char *const HELP_KEYS[PG_COUNT][6] = {
-    {"previous circle", "next circle", "hear it", "mute", "solo", "sound as designed"},
-    {"previous circle", "next circle", "hear it", "mute", "solo", "sound as designed"},
+    {"previous circle", "next circle", "hear it", "mute", "solo", "reset · record IN 1"},
+    {"previous circle", "next circle", "hear it", "mute", "solo", "reset · record IN 1"},
     {"previous circle", "next circle", "mute", "solo", "all heard", "hear it"},
     {"clear the circle", "invert", "reverse", "shuffle", "copy", "paste"},
     {"hear the step", "reset its note", "reset all notes", "previous circle", "next circle", "its length on all"},
@@ -1471,6 +1576,7 @@ void vibe_on_init(float sample_rate)
     if (state_read("state.bin", &st)) pr_state_demo(&st);
     sanitize();
     slots_scan();
+    smp_load_all();
     pr_volume = volume;
     pr_clock((unsigned)clock_out);
     pr_song_mode((unsigned)song_on);
@@ -1481,5 +1587,5 @@ void vibe_on_init(float sample_rate)
 void vibe_on_audio(const float *in, float *out_l, float *out_r, int frames)
 {
     (void)in;
-    pr_render(out_l, out_r, frames);
+    pr_render(in, out_l, out_r, frames);
 }

@@ -4,7 +4,7 @@
 *n* steps spreads its hits evenly over one turn, so 3 against 2, 5 against 4 or 7 against 8 play by themselves –
 each circle with its own sound, its own notes and its own MIDI destination.
 
-![Polycercle](icon.png)
+![Polycercle](docs/polycercle-hero.png)
 
 Polycercle began as a web page (rhythm-circle.com, improved), became a firmware for the M-VAVE FM-1, and is now a
 native VIBE FM firmware: the same patterns, songs and voices, on the full 480 × 320 screen, in your DAW and in the
@@ -15,6 +15,9 @@ browser.
 - **Eight circles, 1–48 steps each**, one shared turn (1–16 beats per turn, 30–300 BPM, swing).
 - **80 sounds in five banks:** an 808 kit (the FM1 Open drum voices: DaisySP / Plaits models), basses, new-age bells
   and bowls, world percussion, synth. Tune, decay, tone, drive, level and pan per circle.
+- **A SAMPLE bank recorded from IN 1:** sixteen slots. Arm one (SOUND → F6 SAMPLE), play into the input: the sound is
+  caught as it starts, trimmed, normalised and kept – then it plays on any circle, at any pitch, with the circle's
+  decay, tone and drive. (In the browser the computer's input, in the DAW the plugin's input.)
 - **Per-step notes:** a transposition (−16…+15 semitones) and a length (free, 1/16 … whole) on every step; play them
   in from the keys.
 - **A rhythm library** (tresillo, son clave, bembé, aksak, clapping music…), **Euclidean** hits, rotation, invert,
@@ -37,6 +40,7 @@ browser.
 - the **16 pads**: the steps of the selected circle (16 a page), hard hits = accents, lit in the circle's colour;
   on MIX a mute / solo mixer for the eight circles
 - the **four knobs** (and A = the circle, B = its sound), **K1–K6** pages in the house layout
+- the **audio input IN 1**: sampling into sixteen slots, with an input meter and a trigger level
 - the **25 keys**: play the circle chromatically, step entry on NOTES, live recording into the circle (REC);
   OCT − / + copy and paste circles
 - the **DAW's song position** and tempo (SDK 8 / 27), **DAW parameters** with mixer convention (SDK 11) and an
@@ -46,11 +50,13 @@ browser.
 - **FOCUS** (DATA + ENTER reach every control) and clicks into the display (SDK 10 / 18)
 - the host's sample rate (44.1 / 48 / 96 kHz …): every voice is recomputed for it, nothing resampled
 
+![Six pages of Polycercle](docs/polycercle-screens.png)
+
 ## Controls
 
 | Control | Does |
 |---|---|
-| **K1 SOUND** | bank, sound, tune, level · soft keys: previous / next circle, hear it, mute, solo, reset |
+| **K1 SOUND** | bank, sound, tune, level · soft keys: previous / next circle, hear it, mute, solo, reset (SAMPLE bank: record from IN 1) |
 | **K2 ENV** | decay, tone, drive, pan |
 | **K3 MIX** | circle, level, pan, master volume · previous / next, mute, solo, all heard · pads 1–8 mute, 9–16 solo |
 | **K4 RHYTHM** | steps, hits (Euclidean), rotate, library · clear, invert, reverse, shuffle, copy, paste |

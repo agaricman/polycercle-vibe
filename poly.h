@@ -28,7 +28,9 @@ enum {
     PR_SCENES = 8,      /* stored scenes A..H */
     PR_CHAIN = 32,      /* song blocks */
     PR_SOUNDS = 16,     /* sounds per bank */
-    PR_BANKS = 5,       /* 0 drums (808 kit), 1 basses, 2 new age, 3 world, 4 synth */
+    PR_BANKS = 6,       /* 0 drums (808 kit), 1 basses, 2 new age, 3 world, 4 synth, 5 samples (IN 1) */
+    PR_SYNTH_BANKS = 4, /* the synthesised banks 1..4 */
+    PR_BANK_SAMPLE = 5,
     PR_EVENTS = 160     /* scheduled hits per audio block (up to 256 frames) */
 };
 
@@ -116,6 +118,9 @@ struct pr_status {
     uint16_t hits[PR_RINGS];/* increments on every hit, per ring */
     uint8_t last_step[PR_RINGS];
     float peak_l, peak_r;   /* output level of the last block */
+    float in_peak;          /* IN 1 level of the last block, -1 while the input is off */
+    uint8_t rec_state, rec_slot;
+    uint32_t rec_len;
 };
 void pr_status_read(struct pr_status *status);
 void pr_engine_init(void);
@@ -131,7 +136,10 @@ unsigned pr_midi_suggest(const struct pr_ring *r, unsigned *mode, unsigned *chan
 void pr_note_name(char *out, int note);          /* "C3" (MIDI 60 = C4) */
 const char *pr_gm_drum_name(unsigned note);      /* "KICK" for 36, 0 if none */
 /* The audio flow: one block, `frames` long (1..VIBE_MAX_BLOCK). */
-void pr_render(float *out_l, float *out_r, int frames);
+void pr_render(const float *in, float *out_l, float *out_r, int frames);
+void pr_rec_arm(unsigned slot);
+void pr_rec_stop(void);
+void pr_rec_release(void);
 
 /* ---- drum voices (poly_drums.c) ---- */
 struct pd_kit;
@@ -160,6 +168,34 @@ void ps_trigger(unsigned ring, unsigned bank, unsigned sound, float velocity,
 void ps_render(unsigned ring, float *mono, unsigned count);
 unsigned ps_active(unsigned ring);
 void ps_panic(unsigned ring);
+
+/* ---- samples recorded from IN 1 (poly_sampler.c): bank SAMPLE, 16 slots ---- */
+enum { SMP_SLOTS = 16, SMP_MAX = 192000 };          /* up to 4 s at 48 kHz, 2 s at 96 kHz */
+extern int16_t smp_data[SMP_SLOTS][SMP_MAX];
+extern volatile uint32_t smp_len[SMP_SLOTS];        /* 0 = empty; the control flow sets it last (release) */
+extern float smp_rate[SMP_SLOTS];                   /* the rate it was recorded at */
+void ss_init(void);
+void ss_trigger(unsigned ring, unsigned slot, float velocity,
+    unsigned tune, unsigned decay, unsigned tone, unsigned drive, int semitones, uint32_t gate);
+void ss_render(unsigned ring, float *mono, unsigned count);
+unsigned ss_active(unsigned ring);
+void ss_panic(unsigned ring);
+/* recording, audio flow: armed -> (the input crosses the threshold) recording -> done; the control flow then takes
+ * the take and releases the buffer */
+enum { REC_IDLE, REC_ARMED, REC_RECORDING, REC_DONE };
+extern float smp_rec[SMP_MAX];
+void ss_rec_arm(unsigned slot, float threshold);
+void ss_rec_stop(void);
+void ss_rec_release(void);
+void ss_rec_block(const float *in, unsigned frames);
+unsigned ss_rec_state(void);
+unsigned ss_rec_slot(void);
+uint32_t ss_rec_length(void);
+float ss_in_peak(void);                             /* input level of the last block, 0..1 (-1: no input) */
+/* control flow: the take into its slot – trimmed, normalised, faded; 0 = kept, -1 = nothing heard */
+int ss_take(unsigned slot, uint32_t length, float rate);
+/* control flow: a slot loaded from storage (int16 samples) */
+void ss_set(unsigned slot, const int16_t *data, uint32_t length, float rate);
 
 /* ---- shared helpers (poly_model.c) ---- */
 extern const char *const pr_bank_names[PR_BANKS];

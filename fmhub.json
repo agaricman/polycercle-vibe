@@ -1,0 +1,10 @@
+{
+  "what": "Eight circles turn together under one hand: a circle of n steps spreads its hits over the turn, so 3 against 4 or 5 against 8 play by themselves. 80 sounds, samples from IN 1, per-step notes, the geometry of rhythm, songs, MIDI out to any device, in time with the DAW.",
+  "kinds": [
+    "groove"
+  ],
+  "cheat": "https://github.com/agaricman/polycercle-vibe#controls",
+  "image": "docs/card.png",
+  "color": "#FF6A1A",
+  "sounds": "none"
+}

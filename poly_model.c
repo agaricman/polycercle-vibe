@@ -13,9 +13,14 @@ const char *const pd_sound_short[PR_SOUNDS] = {
 const uint8_t pd_decay_default[PR_SOUNDS] = {87, 108, 68, 56, 53, 58, 36, 34, 40, 64, 51, 64, 62, 47, 74, 70};
 const uint8_t pd_tone_default[PR_SOUNDS] = {42, 89, 64, 64, 64, 64, 64, 64, 64, 64, 32, 32, 64, 64, 64, 64};
 
-const char *const pr_bank_names[PR_BANKS] = {"808 KIT", "BASS", "NEW AGE", "WORLD", "SYNTH"};
+const char *const pr_bank_names[PR_BANKS] = {"808 KIT", "BASS", "NEW AGE", "WORLD", "SYNTH", "SAMPLE"};
+static const char *const sample_names[PR_SOUNDS][2] = {
+    {"SAMPLE 1", "SMP 1"}, {"SAMPLE 2", "SMP 2"}, {"SAMPLE 3", "SMP 3"}, {"SAMPLE 4", "SMP 4"},
+    {"SAMPLE 5", "SMP 5"}, {"SAMPLE 6", "SMP 6"}, {"SAMPLE 7", "SMP 7"}, {"SAMPLE 8", "SMP 8"},
+    {"SAMPLE 9", "SMP 9"}, {"SAMPLE 10", "SMP 10"}, {"SAMPLE 11", "SMP 11"}, {"SAMPLE 12", "SMP 12"},
+    {"SAMPLE 13", "SMP 13"}, {"SAMPLE 14", "SMP 14"}, {"SAMPLE 15", "SMP 15"}, {"SAMPLE 16", "SMP 16"}};
 /* Tonal banks: full name (sound page, banners) and short name (corner, 8 chars). */
-static const char *const bank_names[PR_BANKS - 1][PR_SOUNDS][2] = {
+static const char *const bank_names[PR_SYNTH_BANKS][PR_SOUNDS][2] = {
     {{"SUB", "SUB"}, {"808", "808"}, {"ACID", "ACID"}, {"ACID SQUARE", "ACID SQ"}, {"MOOG", "MOOG"},
      {"REESE", "REESE"}, {"FM BASS", "FM BASS"}, {"SLAP", "SLAP"}, {"PICK", "PICK"}, {"ROUND", "ROUND"},
      {"UPRIGHT", "UPRIGHT"}, {"FRETLESS", "FRETLESS"}, {"WOBBLE", "WOBBLE"}, {"DUB", "DUB"},
@@ -36,12 +41,14 @@ static const char *const bank_names[PR_BANKS - 1][PR_SOUNDS][2] = {
 PR_SIZE const char *pr_sound_name(unsigned bank, unsigned sound)
 {
     sound %= PR_SOUNDS;
-    return bank && bank < PR_BANKS ? bank_names[bank - 1][sound][0] : pd_sound_names[sound];
+    if (bank == PR_BANK_SAMPLE) return sample_names[sound][0];
+    return bank && bank <= PR_SYNTH_BANKS ? bank_names[bank - 1][sound][0] : pd_sound_names[sound];
 }
 PR_SIZE const char *pr_sound_short(unsigned bank, unsigned sound)
 {
     sound %= PR_SOUNDS;
-    return bank && bank < PR_BANKS ? bank_names[bank - 1][sound][1] : pd_sound_short[sound];
+    if (bank == PR_BANK_SAMPLE) return sample_names[sound][1];
+    return bank && bank <= PR_SYNTH_BANKS ? bank_names[bank - 1][sound][1] : pd_sound_short[sound];
 }
 PR_SIZE void pr_sound_defaults(struct pr_ring *r)
 {

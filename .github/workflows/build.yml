@@ -1,8 +1,11 @@
-# Builds Polycercle with the VIBE FM SDK's own toolchain (Zig 0.13.0), checks it with vibe-check,
-# keeps the files as an artifact of every run, and attaches them to a GitHub release when one is published.
+# Builds Polycercle with the VIBE FM SDK's own toolchain (Zig 0.13.0), checks it with vibe-check and keeps the files
+# as an artifact of every run. A tag v* (git tag v1.0.0 && git push origin v1.0.0) makes a GitHub release with
+# polycercle.wasm and polycercle.zip attached; a release published by hand gets them attached too.
 name: build
 on:
   push:
+    branches: ['**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
   release:
@@ -32,7 +35,8 @@ jobs:
       - name: Build
         run: |
           mkdir -p sdk/firmwares/polycercle
-          rsync -a --exclude .git --exclude .github polycercle/ sdk/firmwares/polycercle/
+          cp -r polycercle/. sdk/firmwares/polycercle/
+          rm -rf sdk/firmwares/polycercle/.git sdk/firmwares/polycercle/.github sdk/firmwares/polycercle/docs
           cd sdk && sh tools/build.sh firmwares/polycercle
       - name: vibe-check
         run: cd sdk && node tools/vibe-check.mjs build/polycercle.wasm --manifest firmwares/polycercle/firmware.json
@@ -43,7 +47,15 @@ jobs:
           path: |
             sdk/build/polycercle.wasm
             sdk/build/polycercle.zip
-      - name: Attach them to the release
+      - name: Release (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" sdk/build/polycercle.wasm sdk/build/polycercle.zip \
+            --title "Polycercle ${GITHUB_REF_NAME#v}" --notes-file polycercle/docs/release-notes.md -R "$GITHUB_REPOSITORY" \
+          || gh release upload "$GITHUB_REF_NAME" sdk/build/polycercle.wasm sdk/build/polycercle.zip --clobber -R "$GITHUB_REPOSITORY"
+      - name: Attach to a release published by hand
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
