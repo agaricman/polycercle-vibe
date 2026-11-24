@@ -1,0 +1,50 @@
+# Builds Polycercle with the VIBE FM SDK's own toolchain (Zig 0.13.0), checks it with vibe-check,
+# keeps the files as an artifact of every run, and attaches them to a GitHub release when one is published.
+name: build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: This firmware
+        uses: actions/checkout@v4
+        with:
+          path: polycercle
+      - name: The VIBE FM SDK
+        uses: actions/checkout@v4
+        with:
+          repository: Vibe-FM-SDK/vibe-fm-sdk
+          path: sdk
+      - name: Zig 0.13.0 (the SDK's compiler)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build
+        run: |
+          mkdir -p sdk/firmwares/polycercle
+          rsync -a --exclude .git --exclude .github polycercle/ sdk/firmwares/polycercle/
+          cd sdk && sh tools/build.sh firmwares/polycercle
+      - name: vibe-check
+        run: cd sdk && node tools/vibe-check.mjs build/polycercle.wasm --manifest firmwares/polycercle/firmware.json
+      - name: Keep the files
+        uses: actions/upload-artifact@v4
+        with:
+          name: polycercle
+          path: |
+            sdk/build/polycercle.wasm
+            sdk/build/polycercle.zip
+      - name: Attach them to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" sdk/build/polycercle.wasm sdk/build/polycercle.zip --clobber -R "${{ github.repository }}"
