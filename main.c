@@ -14,7 +14,8 @@
  *   encoders 1-4: the four values above the soft keys   A: the circle   B: its sound
  *   pads: the steps of the circle (16 a page, - / + page through 48)   keys: play the circle
  *   PLAY / STOP: the transport   REC: keys record into the circle while it plays
- *   HOME: what every control does   DATA + ENTER: every control on the display (FOCUS)
+ *   HOME: what every control does   DATA: the rhythm library (the FM-1's PRESETS knob)
+ *   ENTER held / SHIFT + DATA: every control on the display (FOCUS)
  *
  * Ported from Polycercle for the M-VAVE FM-1 (same patterns, songs and voices). */
 #include "poly.h"
@@ -332,6 +333,15 @@ static void apply_preset(int delta)
     pad_page = 0; rot[sel] = 0; lib_name[sel] = pr_presets[i].name;
     changed();
 }
+/* DATA: the rhythm library on the selected circle, from any page – the FM-1's PRESETS knob */
+static void library_turn(int d)
+{
+    apply_preset(d);
+    static char t[40];
+    strcpy(t, "LIBRARY "); catn(t, (int)preset_idx[sel] + 1); cat(t, "/"); catn(t, (int)pr_preset_count);
+    cat(t, " · CIRCLE "); catn(t, (int)sel + 1);
+    toast(pr_presets[preset_idx[sel]].name, t);
+}
 static void set_euclid(int hits)
 {
     struct pr_ring *r = ring_sel();
@@ -524,9 +534,20 @@ static void song_mode_set(int on)
     toast(song_on ? "PLAY: THE SONG" : "PLAY: THE CIRCLES", song_on ? "SCENES IN ORDER" : "AS EDITED");
     settings_write();
 }
+static void hold_from_host(void)
+{
+    pr_stop();
+    toast("HELD", "THE DAW PLAYS ON · PLAY: BACK IN");
+}
 static void play_toggle(void)
 {
-    if (stat.host && stat.playing) { toast("THE HOST LEADS", "START / STOP THERE"); return; }
+    if (stat.lead) {                     /* the DAW (or a MIDI clock) plays: STOP holds us, PLAY takes its position again */
+        if (stat.playing) { hold_from_host(); return; }
+        publish();
+        pr_play(song_on ? 1u : 0u, 0);
+        toast("BACK IN", "AT THE DAW'S POSITION");
+        return;
+    }
     if (stat.playing) { pr_stop(); return; }
     publish();
     if (song_on) {
@@ -971,7 +992,7 @@ static void button_in(const vibe_event *e)
     case VB_OCT_DOWN: tool(4); break;            /* copy the circle */
     case VB_OCT_UP: tool(5); break;              /* paste it into the selected one (its MIDI route stays) */
     case VB_PLAY: play_toggle(); break;
-    case VB_STOP: if (stat.host && stat.playing) toast("THE HOST LEADS", 0); else pr_stop(); break;
+    case VB_STOP: if (stat.lead && stat.playing) hold_from_host(); else pr_stop(); break;
     case VB_REC: rec = !rec; toast("RECORD", rec ? "KEYS INTO THE CIRCLE" : "OFF"); break;
     case VB_LEFT:
         if (page == PG_NOTES) { cursor_step = cursor_step ? cursor_step - 1 : r->n - 1u; pad_page = cursor_step / 16; }
@@ -1002,6 +1023,7 @@ void vibe_on_event(const vibe_event *e)
         if (e->id <= VE_4) turn(e->id - VE_1, d);
         else if (e->id == VE_A) select_ring(d);
         else if (e->id == VE_B) set_sound(d);
+        else if (e->id == VE_DATA) library_turn(d);
         break; }
     case VIBE_EV_PARAM: param_in(e->id, e->value); break;
     case VIBE_EV_SAVE: save_now(); break;
@@ -1083,7 +1105,9 @@ static void draw_header(void)
     char b[16];
     bpm_text(b, stat.bpm10 ? stat.bpm10 : st.cur.bpm10);
     vg_text(b, 436, 9, VG_MED, stat.host ? GREEN : FG, VG_RIGHT);
-    if (stat.playing) vg_tri(442, 10, 454, 17, 442, 24, GREEN); else vg_rect(443, 11, 11, 11, MUTED);
+    if (stat.playing) vg_tri(442, 10, 454, 17, 442, 24, GREEN);
+    else if (stat.lead) { vg_rect(442, 10, 4, 14, GREEN); vg_rect(450, 10, 4, 14, GREEN); }   /* held: the DAW plays on */
+    else vg_rect(443, 11, 11, 11, MUTED);
     if (rec) vg_circle(466, 17, 6, stat.playing ? RED : vg_mix(BG, RED, 0.5f));
     else {
         float lv[2] = { stat.peak_l, stat.peak_r };
@@ -1447,10 +1471,10 @@ static void leds(void)
     vibe_label(VB_RIGHT, page == PG_NOTES ? "STEP+" : "PAGE+");
 }
 static const char *const HELP_COMMON[] = {
-    "K1-K6", "the pages", "ENCODER A", "the circle", "ENCODER B", "its sound",
+    "K1-K6", "the pages", "ENCODER A", "the circle", "ENCODER B", "its sound", "DATA", "rhythm library",
     "PADS", "steps · hard: accent", "- / +", "step page",
     "KEYS", "play · REC: record", "PLAY / STOP", "circles or song",
-    "OCT - / +", "copy / paste circle",
+    "OCT - / +", "copy / paste circle", "ENTER held", "every control",
 };
 static const char *const HELP_KEYS[PG_COUNT][6] = {
     {"previous circle", "next circle", "hear it", "mute", "solo", "reset · record IN 1"},
@@ -1569,6 +1593,8 @@ void vibe_on_init(float sample_rate)
     vibe_editor_control(PA_SELECT, VIBE_CTL_MENU);
     vibe_param_help(PA_BEATS, "Quarter notes in one turn of the hand: every circle spreads its steps over this");
     vibe_param_help(PA_SWING, "Delays every second step of circles with an even number of steps");
+    vf_mode(VF_ON_HOLD);                 /* DATA is the rhythm library; FOCUS: ENTER / DATA held, or SHIFT + DATA */
+    vf_shift_walk(1);
     vf_clicks(1);
     vibe_stage(stage_fb, 960, 540, BG, 0);
 

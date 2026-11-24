@@ -112,7 +112,8 @@ struct pr_status {
     uint8_t playing, song, block, rep;
     uint8_t scene;          /* scene played in song mode, 255 outside a song */
     uint8_t finished;       /* a one-shot song reached its end */
-    uint8_t host;           /* 1 = a DAW or a MIDI clock leads */
+    uint8_t host;           /* 1 = a DAW or a MIDI clock gives the tempo */
+    uint8_t lead;           /* 1 = the host plays and Polycercle follows it (held: playing 0 – STOP while it plays) */
     uint8_t song_mode;      /* what PLAY from the host starts */
     uint16_t bpm10;         /* the tempo heard now (the host's while it leads) */
     uint16_t hits[PR_RINGS];/* increments on every hit, per ring */

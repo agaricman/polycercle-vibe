@@ -47,7 +47,7 @@ browser.
   Editor with one tab per circle (C1–C8)
 - **MIDI out** with sample-exact note-ons and **MIDI clock out** (SDK 9)
 - the **stage** (SDK 23): the circles, big, in the plugin's and the browser's window
-- **FOCUS** (DATA + ENTER reach every control) and clicks into the display (SDK 10 / 18)
+- **FOCUS** (ENTER held or SHIFT + DATA: every control on the display) and clicks into the display (SDK 10 / 18)
 - the host's sample rate (44.1 / 48 / 96 kHz …): every voice is recomputed for it, nothing resampled
 
 ![Six pages of Polycercle](docs/polycercle-screens.png)
@@ -70,7 +70,8 @@ browser.
 | Pads | the steps (hard hit or SHIFT = accent) · − / + the next 16 steps |
 | Keys | play the circle · REC + PLAY: record into it, on the nearest step |
 | OCT − / + | copy the circle / paste it into the selected one (its MIDI route stays) |
-| PLAY / STOP | the circles, or the song (SONG → MODE) – a DAW or a MIDI clock leads when it plays |
+| PLAY / STOP | the circles, or the song (SONG → MODE). While a DAW or a MIDI clock plays, it leads: STOP holds Polycercle silent, PLAY brings it back in at the DAW's position |
+| DATA | the rhythm library on the selected circle, from any page (the FM-1's PRESETS knob) |
 | HOME | what every control does on this page |
 
 ## The demo

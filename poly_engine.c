@@ -42,6 +42,7 @@ static struct event events[PR_EVENTS];
 static uint32_t phase_hi;                /* whole cycles */
 static uint64_t phase_lo;                /* fraction of the cycle, 2^64 = one cycle */
 static uint8_t playing, song_mode, finished, following, want_song, clock_on = 1;
+static uint8_t rejoin;   /* PLAY while the host plays and we were held: take its position again */
 /* A cycle boundary fell inside the last frame computed: the next segment (in this block or the next one)
  * catches the hits at the very start of the cycle, which lie just behind its first frame. */
 static uint8_t crossed;
@@ -285,7 +286,10 @@ void pr_render(const float *in, float *out_l, float *out_r, int frames_in)
         VIBE_RELEASE();
         command_read = r + 1u;
         if (c.type == CMD_PLAY) {
-            if (following) continue;                     /* the host leads: its PLAY, not ours */
+            if (following) {                             /* the host plays: ours only joins it again after a STOP */
+                if (!playing) { song_mode = c.a; want_song = c.a; playing = 1; finished = 0; rejoin = 1; }
+                continue;
+            }
             song_mode = c.a; want_song = c.a;
             uint32_t start = 0;
             if (c.a) for (unsigned i = 0; i < c.b && i < st->song.length && i < PR_CHAIN; ++i) start += st->song.reps[i];
@@ -293,7 +297,7 @@ void pr_render(const float *in, float *out_l, float *out_r, int frames_in)
             if (!playing) vibe_transport_out(1);
             finished = 0; playing = 1;
         } else if (c.type == CMD_STOP) {
-            if (following) continue;
+            if (following) { if (playing) all_notes_off(0); playing = 0; continue; }   /* held while the host plays on */
             if (playing) { all_notes_off(0); vibe_transport_out(0); }
             playing = 0; phase_hi = 0; phase_lo = 0;
         } else if (c.type == CMD_SONG_MODE) {
@@ -331,6 +335,7 @@ void pr_render(const float *in, float *out_l, float *out_r, int frames_in)
         if (!following) {                                /* the host starts: our own run ends, its position rules */
             following = 1; playing = 1; finished = 0; song_mode = want_song; jumped = 1;
         }
+        if (rejoin) { rejoin = 0; jumped = 1; }
         uint32_t hi = 0; uint64_t lo = 0;
         if (target_of(st, tp->beat, &hi, &lo) < 0) { finished = 1; }
         else {
@@ -343,7 +348,7 @@ void pr_render(const float *in, float *out_l, float *out_r, int frames_in)
             else correction = diff;
         }
     } else if (following) {                              /* the host stopped */
-        following = 0; playing = 0; phase_hi = 0; phase_lo = 0; all_notes_off(0);
+        following = 0; playing = 0; rejoin = 0; phase_hi = 0; phase_lo = 0; all_notes_off(0);
     }
     if (!lead && !playing && song_mode != want_song) song_mode = want_song;
 
@@ -509,7 +514,7 @@ void pr_render(const float *in, float *out_l, float *out_r, int frames_in)
     status.frame_lo = frame0 + frames;
     status.playing = playing && !finished; status.song = song_mode; status.block = (uint8_t)block; status.rep = (uint8_t)rep;
     status.scene = (uint8_t)(playing && song_mode ? scene : 255); status.finished = finished;
-    status.host = (uint8_t)(following || host_bpm > 0.0f); status.song_mode = want_song;
+    status.host = (uint8_t)(following || host_bpm > 0.0f); status.lead = following; status.song_mode = want_song;
     {
         float b10 = bpm_now * 10.0f + .5f;
         status.bpm10 = (uint16_t)(b10 < 100.0f ? 100.0f : b10 > 4000.0f ? 4000.0f : b10);
